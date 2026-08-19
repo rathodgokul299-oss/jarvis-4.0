@@ -1,15 +1,13 @@
 """
-JARVIS CORE
-
-Central intelligence layer for JARVIS 4.0.
+JARVIS 4.0 - CENTRAL CORE
 
 Responsibilities:
-- Conversation processing
-- Memory integration
-- Router integration
-- Groq AI integration
-- Conversation context
-- Web query routing
+- Conversation routing
+- SQLite memory
+- Recent conversation context
+- Groq AI chat
+- Tavily web search
+- Compact web memory
 - Marathi / Hindi / English support
 """
 
@@ -23,6 +21,7 @@ import re
 from memory.memory import JarvisMemory
 from core.router import jarvis_router
 from ai.groq import jarvis_groq
+from web_search import create_web_search_engine
 
 
 # =========================================================
@@ -34,30 +33,83 @@ class JarvisCore:
     def __init__(self):
 
         self.name = "JARVIS Core"
-        self.version = "1.0"
+        self.version = "2.1"
 
-        # -----------------------------------------------
-        # Components
-        # -----------------------------------------------
+        # -------------------------------------------------
+        # MEMORY
+        # -------------------------------------------------
 
         self.memory = JarvisMemory()
 
+        self.context_limit = 12
+
+
+        # -------------------------------------------------
+        # ROUTER
+        # -------------------------------------------------
+
         self.router = jarvis_router
+
+
+        # -------------------------------------------------
+        # GROQ
+        # -------------------------------------------------
 
         self.groq = jarvis_groq
 
-        # -----------------------------------------------
-        # Context
-        # -----------------------------------------------
 
-        self.context_limit = 12
+        # -------------------------------------------------
+        # WEB SEARCH
+        # -------------------------------------------------
+
+        try:
+
+            self.web_search = create_web_search_engine(
+
+                groq_client=(
+                    self.groq.client
+                    if self.groq
+                    else None
+                ),
+
+                groq_model=(
+                    self.groq.model
+                    if self.groq
+                    else ""
+                ),
+
+            )
+
+            print(
+                "[CORE] Web Search initialized."
+            )
+
+        except Exception as error:
+
+            print(
+                "[CORE] Web Search initialization ERROR:",
+                repr(error)
+            )
+
+            self.web_search = None
+
+
+        # -------------------------------------------------
+        # CONVERSATION CONTEXT
+        # -------------------------------------------------
 
         self.conversation_context = {
+
             "topic": "",
+
             "destination": "",
+
             "source": "",
+
             "duration": "",
+
         }
+
 
         print(
             "[CORE] JARVIS Core initialized."
@@ -68,22 +120,28 @@ class JarvisCore:
     # NORMALIZE
     # =====================================================
 
-    def normalize(self, text: str):
+    def normalize(
+        self,
+        text: str
+    ):
 
         text = str(
             text or ""
         ).strip().lower()
+
 
         text = text.replace(
             "’",
             "'"
         )
 
+
         text = re.sub(
             r"\s+",
             " ",
             text
         )
+
 
         return text
 
@@ -108,6 +166,13 @@ class JarvisCore:
         "weather",
         "temperature",
 
+        # Search
+        "search",
+        "google",
+        "online",
+        "internet",
+        "look up",
+
         # Market
         "sensex",
         "nifty",
@@ -118,7 +183,7 @@ class JarvisCore:
         "bse",
         "nse",
 
-        # Roman
+        # Roman Marathi / Hindi
         "aaj",
         "ata",
         "sadhya",
@@ -148,6 +213,7 @@ class JarvisCore:
         "समाचार",
         "मौसम",
         "शेयर बाजार",
+
     ]
 
 
@@ -164,14 +230,23 @@ class JarvisCore:
             message
         )
 
+
+        if not value:
+
+            return False
+
+
         return any(
+
             keyword.lower() in value
+
             for keyword in self.WEB_KEYWORDS
+
         )
 
 
     # =====================================================
-    # GET MEMORY
+    # GET RECENT MEMORY
     # =====================================================
 
     def get_memory(self):
@@ -179,20 +254,26 @@ class JarvisCore:
         try:
 
             memory = self.memory.get_recent(
+
                 limit=self.context_limit
+
             )
 
+
             if not memory:
+
                 return []
+
 
             return memory[
                 -self.context_limit:
             ]
 
+
         except Exception as error:
 
             print(
-                "[CORE MEMORY ERROR]:",
+                "[CORE MEMORY READ ERROR]:",
                 repr(error)
             )
 
@@ -210,9 +291,12 @@ class JarvisCore:
 
         try:
 
-            self.memory.remember_short_term(
+            return self.memory.remember_short_term(
+
                 "user",
+
                 message
+
             )
 
         except Exception as error:
@@ -221,6 +305,8 @@ class JarvisCore:
                 "[CORE USER MEMORY ERROR]:",
                 repr(error)
             )
+
+            return False
 
 
     # =====================================================
@@ -234,9 +320,12 @@ class JarvisCore:
 
         try:
 
-            self.memory.remember_short_term(
+            return self.memory.remember_short_term(
+
                 "assistant",
+
                 message
+
             )
 
         except Exception as error:
@@ -245,6 +334,87 @@ class JarvisCore:
                 "[CORE ASSISTANT MEMORY ERROR]:",
                 repr(error)
             )
+
+            return False
+
+
+    # =====================================================
+    # SAVE COMPACT WEB MEMORY
+    # =====================================================
+
+    def save_web_memory(
+        self,
+        query: str,
+        answer: str
+    ):
+
+        try:
+
+            query = str(
+                query or ""
+            ).strip()
+
+
+            answer = str(
+                answer or ""
+            ).strip()
+
+
+            if not query or not answer:
+
+                return False
+
+
+            # -------------------------------------------------
+            # Only save a compact snapshot.
+            # Frontend still receives the full answer.
+            # -------------------------------------------------
+
+            compact_answer = answer[:700].strip()
+
+
+            if len(answer) > 700:
+
+                compact_answer += "..."
+
+
+            memory_text = (
+
+                "[WEB SEARCH]\n"
+
+                f"Query: {query}\n"
+
+                f"Answer: {compact_answer}"
+
+            )
+
+
+            success = (
+                self.memory.remember_short_term(
+                    "assistant",
+                    memory_text
+                )
+            )
+
+
+            if success:
+
+                print(
+                    "[CORE] Compact web memory saved."
+                )
+
+
+            return success
+
+
+        except Exception as error:
+
+            print(
+                "[CORE WEB MEMORY ERROR]:",
+                repr(error)
+            )
+
+            return False
 
 
     # =====================================================
@@ -258,11 +428,14 @@ class JarvisCore:
         lines = []
 
 
-        # -----------------------------------------------
-        # Conversation context
-        # -----------------------------------------------
+        # -------------------------------------------------
+        # Active conversation context
+        # -------------------------------------------------
 
-        context = self.conversation_context
+        context = (
+            self.conversation_context
+        )
+
 
         if any(
             value
@@ -273,11 +446,13 @@ class JarvisCore:
                 "ACTIVE CONVERSATION CONTEXT:"
             )
 
+
             if context.get("topic"):
 
                 lines.append(
                     f"Topic: {context['topic']}"
                 )
+
 
             if context.get("destination"):
 
@@ -285,11 +460,13 @@ class JarvisCore:
                     f"Destination: {context['destination']}"
                 )
 
+
             if context.get("source"):
 
                 lines.append(
                     f"Starting location: {context['source']}"
                 )
+
 
             if context.get("duration"):
 
@@ -297,12 +474,13 @@ class JarvisCore:
                     f"Trip duration: {context['duration']}"
                 )
 
+
             lines.append("")
 
 
-        # -----------------------------------------------
-        # Recent memory
-        # -----------------------------------------------
+        # -------------------------------------------------
+        # Recent conversation
+        # -------------------------------------------------
 
         if memory:
 
@@ -310,13 +488,16 @@ class JarvisCore:
                 "RECENT CONVERSATION:"
             )
 
+
             for item in memory:
 
                 if not isinstance(
                     item,
                     dict
                 ):
+
                     continue
+
 
                 role = str(
                     item.get(
@@ -325,6 +506,7 @@ class JarvisCore:
                     )
                 ).strip()
 
+
                 content = str(
                     item.get(
                         "content",
@@ -332,15 +514,20 @@ class JarvisCore:
                     )
                 ).strip()
 
+
                 if not content:
+
                     continue
+
 
                 lines.append(
                     f"{role}: {content}"
                 )
 
 
-        return "\n".join(lines)
+        return "\n".join(
+            lines
+        )
 
 
     # =====================================================
@@ -356,9 +543,10 @@ class JarvisCore:
             message
         )
 
-        # -----------------------------------------------
-        # Simple topic detection
-        # -----------------------------------------------
+
+        # -------------------------------------------------
+        # Travel
+        # -------------------------------------------------
 
         travel_words = [
 
@@ -366,13 +554,17 @@ class JarvisCore:
             "trip",
             "tour",
             "visit",
+            "destination",
+
             "प्रवास",
             "फिरायला",
             "जायचं",
             "जायचे",
             "जाना है",
             "घूमने",
+
         ]
+
 
         if any(
             word in value
@@ -384,9 +576,9 @@ class JarvisCore:
             ] = "Travel"
 
 
-        # -----------------------------------------------
+        # -------------------------------------------------
         # Duration
-        # -----------------------------------------------
+        # -------------------------------------------------
 
         duration = re.search(
 
@@ -396,15 +588,21 @@ class JarvisCore:
             value,
 
             flags=re.IGNORECASE
+
         )
+
 
         if duration:
 
             self.conversation_context[
                 "duration"
             ] = (
+
                 duration.group(1)
-                + " days"
+
+                +
+                " days"
+
             )
 
 
@@ -418,7 +616,9 @@ class JarvisCore:
     ):
 
         if not memory:
+
             return
+
 
         for item in memory:
 
@@ -426,10 +626,16 @@ class JarvisCore:
                 item,
                 dict
             ):
+
                 continue
 
-            if item.get("role") != "user":
+
+            if item.get(
+                "role"
+            ) != "user":
+
                 continue
+
 
             content = str(
                 item.get(
@@ -437,6 +643,7 @@ class JarvisCore:
                     ""
                 )
             ).strip()
+
 
             if content:
 
@@ -446,7 +653,158 @@ class JarvisCore:
 
 
     # =====================================================
-    # PROCESS
+    # PROCESS WEB QUERY
+    # =====================================================
+
+    async def process_web_query(
+        self,
+        message: str
+    ):
+
+        print(
+            "[CORE] Processing web query:",
+            message
+        )
+
+
+        # -------------------------------------------------
+        # Check engine
+        # -------------------------------------------------
+
+        if self.web_search is None:
+
+            return {
+
+                "type":
+                    "error",
+
+                "message":
+                    "Sir, web search engine available नाही.",
+
+                "route":
+                    {
+                        "route":
+                            "web",
+
+                        "reason":
+                            "web_engine_missing"
+
+                    },
+
+            }
+
+
+        # -------------------------------------------------
+        # Search
+        # -------------------------------------------------
+
+        try:
+
+            answer = self.web_search.answer(
+                message
+            )
+
+
+        except Exception as error:
+
+            print(
+                "[CORE WEB ERROR]:",
+                repr(error)
+            )
+
+
+            return {
+
+                "type":
+                    "error",
+
+                "message":
+                    "Sir, web search करताना problem आली.",
+
+                "error":
+                    repr(error),
+
+                "route":
+                    {
+                        "route":
+                            "web",
+
+                        "reason":
+                            "web_search_error"
+
+                    },
+
+            }
+
+
+        answer = str(
+            answer or ""
+        ).strip()
+
+
+        # -------------------------------------------------
+        # No answer
+        # -------------------------------------------------
+
+        if not answer:
+
+            answer = (
+                "Sir, मला web वरून योग्य answer मिळाला नाही."
+            )
+
+
+        # -------------------------------------------------
+        # IMPORTANT:
+        # Save only compact web memory.
+        # -------------------------------------------------
+
+        self.save_web_memory(
+
+            query=
+                message,
+
+            answer=
+                answer
+
+        )
+
+
+        # -------------------------------------------------
+        # Return FULL answer
+        # -------------------------------------------------
+
+        return {
+
+            "type":
+                "web",
+
+            "message":
+                answer,
+
+            "memory":
+                self.get_memory(),
+
+            "context":
+                self.build_context(),
+
+            "route":
+                {
+                    "route":
+                        "web",
+
+                    "message":
+                        message,
+
+                    "reason":
+                        "fresh_web_query",
+
+                },
+
+        }
+
+
+    # =====================================================
+    # MAIN PROCESS
     # =====================================================
 
     async def process(
@@ -459,15 +817,16 @@ class JarvisCore:
         ).strip()
 
 
-        # -----------------------------------------------
+        # -------------------------------------------------
         # Empty
-        # -----------------------------------------------
+        # -------------------------------------------------
 
         if not message:
 
             return {
 
-                "type": "error",
+                "type":
+                    "error",
 
                 "message":
                     "Empty request",
@@ -481,40 +840,46 @@ class JarvisCore:
             }
 
 
-        # -----------------------------------------------
+        # -------------------------------------------------
         # Save user
-        # -----------------------------------------------
+        # -------------------------------------------------
 
         self.save_user_message(
             message
         )
 
 
-        # -----------------------------------------------
-        # Restore context
-        # -----------------------------------------------
+        # -------------------------------------------------
+        # Memory
+        # -------------------------------------------------
 
         memory = self.get_memory()
+
 
         self.restore_context(
             memory
         )
+
 
         self.update_context(
             message
         )
 
 
-        # -----------------------------------------------
+        # -------------------------------------------------
         # Context
-        # -----------------------------------------------
+        # -------------------------------------------------
 
         context = self.build_context()
 
 
         print()
         print(
-            "[CORE]"
+            "========================================"
+        )
+
+        print(
+            "[CORE REQUEST]"
         )
 
         print(
@@ -523,8 +888,20 @@ class JarvisCore:
         )
 
         print(
-            "Context length:",
-            len(context)
+            "Context:",
+            len(context),
+            "characters"
+        )
+
+        print(
+            "Web:",
+            self.is_web_query(
+                message
+            )
+        )
+
+        print(
+            "========================================"
         )
 
 
@@ -534,9 +911,17 @@ class JarvisCore:
 
         try:
 
-            route_result = self.router.auto_route(
-                message
+            route_result = self.router.route(
+
+                message,
+
+                is_web=
+                    self.is_web_query(
+                        message
+                    )
+
             )
+
 
         except Exception as error:
 
@@ -545,26 +930,37 @@ class JarvisCore:
                 repr(error)
             )
 
+
             route_result = {
 
                 "route":
-                    "web"
-                    if self.is_web_query(message)
-                    else "chat",
+
+                    (
+                        "web"
+                        if self.is_web_query(
+                            message
+                        )
+                        else
+                        "chat"
+                    ),
 
                 "message":
                     message,
 
                 "reason":
-                    "fallback"
+                    "fallback",
 
             }
 
 
-        route = route_result.get(
-            "route",
-            "chat"
-        )
+        route = str(
+
+            route_result.get(
+                "route",
+                "chat"
+            )
+
+        ).strip().lower()
 
 
         print(
@@ -574,17 +970,29 @@ class JarvisCore:
 
 
         # =================================================
-        # WEB
+        # WEB ROUTE
         # =================================================
 
         if route == "web":
 
+            return await self.process_web_query(
+                message
+            )
+
+
+        # =================================================
+        # GROQ CHECK
+        # =================================================
+
+        if self.groq is None:
+
             return {
 
-                "type": "web",
+                "type":
+                    "error",
 
                 "message":
-                    message,
+                    "Sir, Groq AI available नाही.",
 
                 "memory":
                     self.get_memory(),
@@ -599,18 +1007,21 @@ class JarvisCore:
 
 
         # =================================================
-        # GROQ
+        # NORMAL GROQ CHAT
         # =================================================
 
         try:
 
             groq_result = await self.groq.chat(
 
-                message=message,
+                message=
+                    message,
 
-                context=context
+                context=
+                    context,
 
             )
+
 
         except Exception as error:
 
@@ -619,9 +1030,11 @@ class JarvisCore:
                 repr(error)
             )
 
+
             return {
 
-                "type": "error",
+                "type":
+                    "error",
 
                 "message":
                     "Groq AI response generate करताना error आला.",
@@ -652,7 +1065,8 @@ class JarvisCore:
 
             return {
 
-                "type": "error",
+                "type":
+                    "error",
 
                 "message":
                     groq_result.get(
@@ -689,22 +1103,31 @@ class JarvisCore:
                 ""
             )
 
+            or
+
+            ""
+
         ).strip()
 
 
-        # -----------------------------------------------
-        # Save response
-        # -----------------------------------------------
+        if not response_message:
 
-        if response_message:
-
-            self.save_assistant_message(
-                response_message
+            response_message = (
+                "Sir, मला योग्य response मिळाला नाही."
             )
 
 
+        # -------------------------------------------------
+        # Save normal assistant response
+        # -------------------------------------------------
+
+        self.save_assistant_message(
+            response_message
+        )
+
+
         # =================================================
-        # FINAL
+        # FINAL CHAT
         # =================================================
 
         return {
@@ -726,12 +1149,15 @@ class JarvisCore:
 
             "model":
                 groq_result.get(
+
                     "model",
+
                     getattr(
                         self.groq,
                         "model",
                         ""
                     )
+
                 ),
 
         }
@@ -749,12 +1175,14 @@ class JarvisCore:
 
         try:
 
-            self.memory.remember_short_term(
+            return self.memory.remember_short_term(
+
                 role,
+
                 content
+
             )
 
-            return True
 
         except Exception as error:
 
@@ -794,7 +1222,9 @@ class JarvisCore:
 
             }
 
+
             return True
+
 
         except Exception as error:
 
@@ -812,6 +1242,45 @@ class JarvisCore:
 
     def status(self):
 
+        groq_ok = False
+
+        web_ok = False
+
+
+        # -------------------------------------------------
+        # Groq
+        # -------------------------------------------------
+
+        try:
+
+            if self.groq:
+
+                groq_ok = (
+                    self.groq.is_available()
+                )
+
+        except Exception:
+
+            groq_ok = False
+
+
+        # -------------------------------------------------
+        # Web
+        # -------------------------------------------------
+
+        try:
+
+            if self.web_search:
+
+                web_ok = (
+                    self.web_search.is_available()
+                )
+
+        except Exception:
+
+            web_ok = False
+
+
         return {
 
             "name":
@@ -827,16 +1296,16 @@ class JarvisCore:
                 self.router is not None,
 
             "groq":
-                (
-                    self.groq is not None
-                    and self.groq.is_available()
-                ),
+                groq_ok,
+
+            "web_search":
+                web_ok,
 
         }
 
 
 # =========================================================
-# SINGLE CORE INSTANCE
+# SINGLE INSTANCE
 # =========================================================
 
 try:
@@ -846,6 +1315,7 @@ try:
     print(
         "[CORE] JARVIS Core ready."
     )
+
 
 except Exception as error:
 

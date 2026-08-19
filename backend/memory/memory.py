@@ -1,14 +1,13 @@
 """
-JARVIS MEMORY SYSTEM
-====================
+JARVIS 4.0 - OPTIMIZED MEMORY SYSTEM
 
 Responsibilities:
-- SQLite database
-- Short-term conversation memory
-- Recent messages
-- User / assistant message storage
-- Memory clearing
-- Safe database initialization
+- SQLite conversation memory
+- Recent context
+- Message length protection
+- Duplicate protection
+- Memory cleanup
+- Search
 """
 
 import sqlite3
@@ -23,11 +22,26 @@ from datetime import datetime
 
 MEMORY_DIR = Path(__file__).resolve().parent
 
-DATABASE_FILE = MEMORY_DIR / "jarvis_memory.db"
+DATABASE_FILE = (
+    MEMORY_DIR / "jarvis_memory.db"
+)
 
 
 # =========================================================
-# MEMORY CLASS
+# LIMITS
+# =========================================================
+
+MAX_MESSAGE_LENGTH = 4000
+
+DEFAULT_RECENT_LIMIT = 12
+
+MAX_RECENT_LIMIT = 30
+
+MAX_DATABASE_ROWS = 500
+
+
+# =========================================================
+# MEMORY
 # =========================================================
 
 class JarvisMemory:
@@ -38,7 +52,8 @@ class JarvisMemory:
     ):
 
         self.name = "JARVIS Memory"
-        self.version = "3.0"
+
+        self.version = "4.0"
 
         self.database_path = Path(
             database_path
@@ -57,7 +72,7 @@ class JarvisMemory:
 
 
     # =====================================================
-    # DATABASE CONNECTION
+    # CONNECTION
     # =====================================================
 
     def _connect(self):
@@ -67,13 +82,15 @@ class JarvisMemory:
             timeout=10
         )
 
-        connection.row_factory = sqlite3.Row
+        connection.row_factory = (
+            sqlite3.Row
+        )
 
         return connection
 
 
     # =====================================================
-    # INITIALIZE DATABASE
+    # INITIALIZE
     # =====================================================
 
     def _initialize_database(self):
@@ -85,6 +102,7 @@ class JarvisMemory:
                 connection = self._connect()
 
                 cursor = connection.cursor()
+
 
                 cursor.execute(
                     """
@@ -102,14 +120,26 @@ class JarvisMemory:
                     """
                 )
 
+
+                cursor.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS
+                    idx_conversations_created
+                    ON conversations(created_at)
+                    """
+                )
+
+
                 connection.commit()
 
                 connection.close()
+
 
             print(
                 "[MEMORY] Database initialized:",
                 self.database_path
             )
+
 
         except Exception as error:
 
@@ -120,7 +150,146 @@ class JarvisMemory:
 
 
     # =====================================================
-    # REMEMBER SHORT TERM
+    # NORMALIZE CONTENT
+    # =====================================================
+
+    def _normalize_content(
+        self,
+        content: str
+    ):
+
+        content = str(
+            content or ""
+        ).strip()
+
+
+        if not content:
+
+            return ""
+
+
+        # -----------------------------------------------
+        # Normalize excessive whitespace
+        # -----------------------------------------------
+
+        content = " ".join(
+            content.split()
+        )
+
+
+        # -----------------------------------------------
+        # Maximum length
+        # -----------------------------------------------
+
+        if len(content) > MAX_MESSAGE_LENGTH:
+
+            content = (
+                content[
+                    :MAX_MESSAGE_LENGTH
+                ].rstrip()
+                +
+                "..."
+            )
+
+
+        return content
+
+
+    # =====================================================
+    # DUPLICATE CHECK
+    # =====================================================
+
+    def _is_duplicate_last(
+        self,
+        connection,
+        role: str,
+        content: str
+    ):
+
+        cursor = connection.cursor()
+
+
+        cursor.execute(
+            """
+            SELECT role, content
+            FROM conversations
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        )
+
+
+        row = cursor.fetchone()
+
+
+        if not row:
+
+            return False
+
+
+        return (
+
+            row["role"] == role
+
+            and
+
+            row["content"] == content
+
+        )
+
+
+    # =====================================================
+    # CLEAN OLD DATA
+    # =====================================================
+
+    def _cleanup_old_rows(
+        self,
+        connection
+    ):
+
+        cursor = connection.cursor()
+
+
+        cursor.execute(
+            """
+            SELECT COUNT(*)
+            FROM conversations
+            """
+        )
+
+
+        count = int(
+            cursor.fetchone()[0]
+        )
+
+
+        if count <= MAX_DATABASE_ROWS:
+
+            return
+
+
+        delete_count = (
+            count - MAX_DATABASE_ROWS
+        )
+
+
+        cursor.execute(
+            """
+            DELETE FROM conversations
+            WHERE id IN
+            (
+                SELECT id
+                FROM conversations
+                ORDER BY id ASC
+                LIMIT ?
+            )
+            """,
+            (delete_count,)
+        )
+
+
+    # =====================================================
+    # REMEMBER
     # =====================================================
 
     def remember_short_term(
@@ -133,19 +302,25 @@ class JarvisMemory:
             role or ""
         ).strip().lower()
 
-        content = str(
-            content or ""
-        ).strip()
+
+        content = self._normalize_content(
+            content
+        )
+
 
         if not role or not content:
 
             return False
 
+
         allowed_roles = {
+
             "user",
             "assistant",
-            "system"
+            "system",
+
         }
+
 
         if role not in allowed_roles:
 
@@ -163,7 +338,24 @@ class JarvisMemory:
 
                 connection = self._connect()
 
+
+                # -----------------------------------------
+                # Duplicate protection
+                # -----------------------------------------
+
+                if self._is_duplicate_last(
+                    connection,
+                    role,
+                    content
+                ):
+
+                    connection.close()
+
+                    return True
+
+
                 cursor = connection.cursor()
+
 
                 cursor.execute(
                     """
@@ -183,11 +375,19 @@ class JarvisMemory:
                     )
                 )
 
+
+                self._cleanup_old_rows(
+                    connection
+                )
+
+
                 connection.commit()
 
                 connection.close()
 
+
             return True
+
 
         except Exception as error:
 
@@ -205,7 +405,7 @@ class JarvisMemory:
 
     def get_recent(
         self,
-        limit: int = 12
+        limit: int = DEFAULT_RECENT_LIMIT
     ):
 
         try:
@@ -214,12 +414,18 @@ class JarvisMemory:
 
         except Exception:
 
-            limit = 12
+            limit = (
+                DEFAULT_RECENT_LIMIT
+            )
 
 
-        if limit <= 0:
-
-            return []
+        limit = max(
+            1,
+            min(
+                limit,
+                MAX_RECENT_LIMIT
+            )
+        )
 
 
         try:
@@ -229,6 +435,7 @@ class JarvisMemory:
                 connection = self._connect()
 
                 cursor = connection.cursor()
+
 
                 cursor.execute(
                     """
@@ -244,6 +451,7 @@ class JarvisMemory:
                     (limit,)
                 )
 
+
                 rows = cursor.fetchall()
 
                 connection.close()
@@ -256,16 +464,28 @@ class JarvisMemory:
 
             result = []
 
+
             for row in rows:
 
                 result.append(
+
                     {
-                        "id": row["id"],
-                        "role": row["role"],
-                        "content": row["content"],
-                        "created_at": row["created_at"],
+                        "id":
+                            row["id"],
+
+                        "role":
+                            row["role"],
+
+                        "content":
+                            row["content"],
+
+                        "created_at":
+                            row["created_at"],
+
                     }
+
                 )
+
 
             return result
 
@@ -294,6 +514,7 @@ class JarvisMemory:
 
                 cursor = connection.cursor()
 
+
                 cursor.execute(
                     """
                     SELECT
@@ -306,6 +527,7 @@ class JarvisMemory:
                     """
                 )
 
+
                 rows = cursor.fetchall()
 
                 connection.close()
@@ -313,16 +535,28 @@ class JarvisMemory:
 
             result = []
 
+
             for row in rows:
 
                 result.append(
+
                     {
-                        "id": row["id"],
-                        "role": row["role"],
-                        "content": row["content"],
-                        "created_at": row["created_at"],
+                        "id":
+                            row["id"],
+
+                        "role":
+                            row["role"],
+
+                        "content":
+                            row["content"],
+
+                        "created_at":
+                            row["created_at"],
+
                     }
+
                 )
+
 
             return result
 
@@ -351,6 +585,7 @@ class JarvisMemory:
 
                 cursor = connection.cursor()
 
+
                 cursor.execute(
                     """
                     SELECT COUNT(*)
@@ -358,11 +593,15 @@ class JarvisMemory:
                     """
                 )
 
+
                 result = cursor.fetchone()[0]
 
                 connection.close()
 
-            return int(result)
+
+            return int(
+                result
+            )
 
 
         except Exception as error:
@@ -376,7 +615,7 @@ class JarvisMemory:
 
 
     # =====================================================
-    # CLEAR SHORT TERM
+    # CLEAR
     # =====================================================
 
     def clear_short_term(self):
@@ -389,19 +628,23 @@ class JarvisMemory:
 
                 cursor = connection.cursor()
 
+
                 cursor.execute(
                     """
                     DELETE FROM conversations
                     """
                 )
 
+
                 connection.commit()
 
                 connection.close()
 
+
             print(
                 "[MEMORY] Short-term memory cleared."
             )
+
 
             return True
 
@@ -417,7 +660,7 @@ class JarvisMemory:
 
 
     # =====================================================
-    # DELETE LAST N
+    # DELETE LAST
     # =====================================================
 
     def delete_last(
@@ -447,6 +690,7 @@ class JarvisMemory:
 
                 cursor = connection.cursor()
 
+
                 cursor.execute(
                     """
                     DELETE FROM conversations
@@ -461,9 +705,11 @@ class JarvisMemory:
                     (count,)
                 )
 
+
                 connection.commit()
 
                 connection.close()
+
 
             return True
 
@@ -492,6 +738,7 @@ class JarvisMemory:
             keyword or ""
         ).strip()
 
+
         if not keyword:
 
             return []
@@ -506,9 +753,13 @@ class JarvisMemory:
             limit = 20
 
 
-        if limit <= 0:
-
-            return []
+        limit = max(
+            1,
+            min(
+                limit,
+                50
+            )
+        )
 
 
         try:
@@ -518,6 +769,7 @@ class JarvisMemory:
                 connection = self._connect()
 
                 cursor = connection.cursor()
+
 
                 cursor.execute(
                     """
@@ -537,6 +789,7 @@ class JarvisMemory:
                     )
                 )
 
+
                 rows = cursor.fetchall()
 
                 connection.close()
@@ -544,16 +797,28 @@ class JarvisMemory:
 
             result = []
 
+
             for row in rows:
 
                 result.append(
+
                     {
-                        "id": row["id"],
-                        "role": row["role"],
-                        "content": row["content"],
-                        "created_at": row["created_at"],
+                        "id":
+                            row["id"],
+
+                        "role":
+                            row["role"],
+
+                        "content":
+                            row["content"],
+
+                        "created_at":
+                            row["created_at"],
+
                     }
+
                 )
+
 
             return list(
                 reversed(result)
@@ -568,6 +833,54 @@ class JarvisMemory:
             )
 
             return []
+
+
+    # =====================================================
+    # COMPACT DATABASE
+    # =====================================================
+
+    def compact(self):
+
+        try:
+
+            with self.lock:
+
+                connection = self._connect()
+
+                cursor = connection.cursor()
+
+
+                self._cleanup_old_rows(
+                    connection
+                )
+
+
+                cursor.execute(
+                    "VACUUM"
+                )
+
+
+                connection.commit()
+
+                connection.close()
+
+
+            print(
+                "[MEMORY] Database compacted."
+            )
+
+
+            return True
+
+
+        except Exception as error:
+
+            print(
+                "[MEMORY COMPACT ERROR]:",
+                repr(error)
+            )
+
+            return False
 
 
 # =========================================================

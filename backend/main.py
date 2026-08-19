@@ -1,3 +1,4 @@
+
 """
 =========================================================
 JARVIS 4.0
@@ -11,44 +12,72 @@ Frontend
 /chat
    ↓
 Local Commands
-   ├── Chrome
-   ├── Calculator
-   ├── YouTube
-   ├── Sleep
-   └── Wake
    ↓
 JARVIS Core
+   ├── Router
+   ├── Groq
+   ├── Tavily Web Search
+   └── Memory
+
+Vision
    ↓
-Router
-   ├── Web
-   └── Groq AI
+/vision
    ↓
-Memory
+Groq Vision
+
+System
    ↓
-Response
+/system
+   ↓
+psutil
 
 Endpoints:
 
 GET  /
 GET  /status
+GET  /system
 
 POST /chat
+POST /vision
+
 POST /wake
 POST /sleep
 
 POST /memory/remember
 POST /memory/clear
+POST /reset
 =========================================================
 """
 
+# =========================================================
+# STANDARD LIBRARY
+# =========================================================
+
 import os
+import re
 import sys
+import time
 import traceback
+import platform
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+
+# =========================================================
+# THIRD PARTY
+# =========================================================
+
+from fastapi import (
+    FastAPI,
+    File,
+    Form,
+    UploadFile,
+)
+
+from fastapi.middleware.cors import (
+    CORSMiddleware
+)
+
 from pydantic import BaseModel
 
 
@@ -56,47 +85,128 @@ from pydantic import BaseModel
 # BACKEND PATH
 # =========================================================
 
-BACKEND_DIR = Path(__file__).resolve().parent
+BACKEND_DIR = Path(
+    __file__
+).resolve().parent
+
 
 if str(BACKEND_DIR) not in sys.path:
-    sys.path.insert(0, str(BACKEND_DIR))
 
-
-print()
-print("=" * 60)
-print("              JARVIS 4.0")
-print("          BACKEND INITIALIZING")
-print("=" * 60)
-print("[MAIN] Backend directory:", BACKEND_DIR)
-print()
+    sys.path.insert(
+        0,
+        str(BACKEND_DIR)
+    )
 
 
 # =========================================================
-# COMPONENT IMPORTS
+# START TIME
 # =========================================================
 
-handle_local_command = None
-jarvis_router = None
-jarvis_groq = None
-jarvis_core = None
+START_TIME = time.time()
 
 
 # =========================================================
-# COMMANDS
+# OPTIONAL PSUTIL
 # =========================================================
 
 try:
 
-    from core.commands import handle_local_command
+    import psutil
 
-    print("[MAIN] Commands loaded successfully.")
+    PSUTIL_AVAILABLE = True
+
+    print(
+        "[MAIN] psutil loaded."
+    )
 
 except Exception as error:
 
-    print("[MAIN] Commands import ERROR:")
-    print(repr(error))
+    PSUTIL_AVAILABLE = False
+    psutil = None
 
-    traceback.print_exc()
+    print(
+        "[MAIN] psutil unavailable:",
+        repr(error)
+    )
+
+
+# =========================================================
+# CONFIG
+# =========================================================
+
+try:
+
+    from config import (
+        GROQ_API_KEY,
+        GROQ_MODEL,
+        VISION_MODEL,
+        TAVILY_API_KEY,
+        TAVILY_SEARCH_URL,
+    )
+
+    print(
+        "[MAIN] Config loaded."
+    )
+
+except Exception as error:
+
+    print(
+        "[MAIN] Config import ERROR:",
+        repr(error)
+    )
+
+    GROQ_API_KEY = os.getenv(
+        "GROQ_API_KEY",
+        ""
+    ).strip()
+
+    GROQ_MODEL = os.getenv(
+        "GROQ_MODEL",
+        "openai/gpt-oss-120b"
+    ).strip()
+
+    VISION_MODEL = os.getenv(
+        "VISION_MODEL",
+        "qwen/qwen3.6-27b"
+    ).strip()
+
+    TAVILY_API_KEY = os.getenv(
+        "TAVILY_API_KEY",
+        ""
+    ).strip()
+
+    TAVILY_SEARCH_URL = os.getenv(
+        "TAVILY_SEARCH_URL",
+        "https://api.tavily.com/search"
+    ).strip()
+
+
+# =========================================================
+# LOCAL COMMANDS
+# =========================================================
+
+try:
+
+    from core.commands import (
+        handle_local_command
+    )
+
+    COMMANDS_AVAILABLE = True
+
+    print(
+        "[MAIN] Commands loaded."
+    )
+
+except Exception as error:
+
+    COMMANDS_AVAILABLE = False
+
+    handle_local_command = None
+
+    print(
+        "[MAIN] Commands import ERROR:",
+        repr(error)
+    )
 
 
 # =========================================================
@@ -105,16 +215,26 @@ except Exception as error:
 
 try:
 
-    from core.router import jarvis_router
+    from core.router import (
+        jarvis_router
+    )
 
-    print("[MAIN] Router loaded successfully.")
+    ROUTER_AVAILABLE = True
+
+    print(
+        "[MAIN] Router loaded."
+    )
 
 except Exception as error:
 
-    print("[MAIN] Router import ERROR:")
-    print(repr(error))
+    ROUTER_AVAILABLE = False
 
-    traceback.print_exc()
+    jarvis_router = None
+
+    print(
+        "[MAIN] Router import ERROR:",
+        repr(error)
+    )
 
 
 # =========================================================
@@ -123,16 +243,26 @@ except Exception as error:
 
 try:
 
-    from ai.groq import jarvis_groq
+    from ai.groq import (
+        jarvis_groq
+    )
 
-    print("[MAIN] Groq loaded successfully.")
+    GROQ_AVAILABLE = True
+
+    print(
+        "[MAIN] Groq loaded."
+    )
 
 except Exception as error:
 
-    print("[MAIN] Groq import ERROR:")
-    print(repr(error))
+    GROQ_AVAILABLE = False
 
-    traceback.print_exc()
+    jarvis_groq = None
+
+    print(
+        "[MAIN] Groq import ERROR:",
+        repr(error)
+    )
 
 
 # =========================================================
@@ -141,16 +271,88 @@ except Exception as error:
 
 try:
 
-    from core.jarvis_core import jarvis_core
+    from core.jarvis_core import (
+        jarvis_core
+    )
 
-    print("[MAIN] JARVIS Core loaded successfully.")
+    CORE_AVAILABLE = (
+        jarvis_core is not None
+    )
+
+    print(
+        "[MAIN] JARVIS Core loaded."
+    )
 
 except Exception as error:
 
-    print("[MAIN] JARVIS Core import ERROR:")
-    print(repr(error))
+    CORE_AVAILABLE = False
 
-    traceback.print_exc()
+    jarvis_core = None
+
+    print(
+        "[MAIN] JARVIS Core import ERROR:",
+        repr(error)
+    )
+
+
+# =========================================================
+# WEB SEARCH
+# =========================================================
+
+try:
+
+    from web_search import (
+        web_search_engine,
+        create_web_search_engine,
+    )
+
+    WEB_SEARCH_AVAILABLE = (
+        web_search_engine is not None
+    )
+
+    print(
+        "[MAIN] Web Search loaded."
+    )
+
+except Exception as error:
+
+    WEB_SEARCH_AVAILABLE = False
+
+    web_search_engine = None
+    create_web_search_engine = None
+
+    print(
+        "[MAIN] Web Search import ERROR:",
+        repr(error)
+    )
+
+
+# =========================================================
+# VISION
+# =========================================================
+
+try:
+
+    from vision import (
+        ask_vision
+    )
+
+    VISION_MODULE_AVAILABLE = True
+
+    print(
+        "[MAIN] Vision loaded."
+    )
+
+except Exception as error:
+
+    VISION_MODULE_AVAILABLE = False
+
+    ask_vision = None
+
+    print(
+        "[MAIN] Vision import ERROR:",
+        repr(error)
+    )
 
 
 # =========================================================
@@ -162,7 +364,7 @@ app = FastAPI(
     title="JARVIS 4.0",
 
     description=(
-        "JARVIS Personal AI Assistant Backend"
+        "Personal AI Assistant Backend"
     ),
 
     version="4.0.0",
@@ -190,7 +392,7 @@ app.add_middleware(
 
 
 # =========================================================
-# GLOBAL STATE
+# STATE
 # =========================================================
 
 jarvis_sleeping = False
@@ -200,12 +402,16 @@ jarvis_sleeping = False
 # REQUEST MODELS
 # =========================================================
 
-class ChatRequest(BaseModel):
+class ChatRequest(
+    BaseModel
+):
 
     message: str
 
 
-class MemoryRequest(BaseModel):
+class MemoryRequest(
+    BaseModel
+):
 
     role: str
 
@@ -216,57 +422,411 @@ class MemoryRequest(BaseModel):
 # HELPER
 # =========================================================
 
-def get_core_status():
+def clean_reply(
+    text: str
+) -> str:
 
-    """
-    Safely check whether JARVIS Core is available.
-    """
-
-    global jarvis_core
-
-    return jarvis_core is not None
+    text = str(
+        text or ""
+    ).strip()
 
 
-def get_groq_status():
+    text = re.sub(
 
-    """
-    Safely check Groq availability.
-    """
+        r"<think>.*?</think>",
 
-    global jarvis_groq
+        "",
 
-    if jarvis_groq is None:
-        return False
+        text,
+
+        flags=
+            re.IGNORECASE
+            |
+            re.DOTALL,
+
+    )
+
+
+    text = re.sub(
+
+        r"<think>.*$",
+
+        "",
+
+        text,
+
+        flags=
+            re.IGNORECASE
+            |
+            re.DOTALL,
+
+    )
+
+
+    text = re.sub(
+
+        r"</?think>",
+
+        "",
+
+        text,
+
+        flags=
+            re.IGNORECASE,
+
+    )
+
+
+    return text.strip()
+
+
+# =========================================================
+# SYSTEM MONITOR
+# =========================================================
+
+def format_bytes(
+    value: int
+) -> str:
 
     try:
 
-        return bool(
-            jarvis_groq.is_available()
+        value = float(
+            value or 0
         )
 
     except Exception:
 
-        return False
+        value = 0.0
 
 
-def get_groq_model():
+    units = [
+        "B",
+        "KB",
+        "MB",
+        "GB",
+        "TB",
+    ]
 
-    """
-    Safely get current Groq model.
-    """
 
-    global jarvis_groq
+    index = 0
 
-    if jarvis_groq is None:
-        return None
+
+    while (
+        value >= 1024
+        and
+        index < len(units) - 1
+    ):
+
+        value /= 1024
+
+        index += 1
+
+
+    if index == 0:
+
+        return (
+            f"{int(value)} "
+            f"{units[index]}"
+        )
+
+
+    return (
+        f"{value:.2f} "
+        f"{units[index]}"
+    )
+
+
+def format_uptime(
+    seconds: int
+) -> str:
 
     try:
 
-        return jarvis_groq.model
+        seconds = int(
+            seconds
+        )
 
     except Exception:
 
-        return None
+        seconds = 0
+
+
+    seconds = max(
+        seconds,
+        0
+    )
+
+
+    days = seconds // 86400
+
+    seconds %= 86400
+
+    hours = seconds // 3600
+
+    seconds %= 3600
+
+    minutes = seconds // 60
+
+    seconds %= 60
+
+
+    if days:
+
+        return (
+            f"{days}d "
+            f"{hours}h "
+            f"{minutes}m"
+        )
+
+
+    if hours:
+
+        return (
+            f"{hours}h "
+            f"{minutes}m"
+        )
+
+
+    if minutes:
+
+        return (
+            f"{minutes}m "
+            f"{seconds}s"
+        )
+
+
+    return f"{seconds}s"
+
+
+def get_system_stats():
+
+    if not PSUTIL_AVAILABLE:
+
+        return {
+
+            "success":
+                False,
+
+            "online":
+                False,
+
+            "error":
+                "psutil is not installed.",
+
+        }
+
+
+    try:
+
+        cpu = psutil.cpu_percent(
+            interval=0.15
+        )
+
+
+        memory = (
+            psutil.virtual_memory()
+        )
+
+
+        disk = psutil.disk_usage(
+            os.path.abspath(
+                os.sep
+            )
+        )
+
+
+        network = (
+            psutil.net_io_counters()
+        )
+
+
+        battery = None
+        battery_charging = None
+
+
+        try:
+
+            battery_info = (
+                psutil.sensors_battery()
+            )
+
+            if battery_info:
+
+                battery = round(
+                    float(
+                        battery_info.percent
+                    ),
+                    1
+                )
+
+                battery_charging = (
+                    bool(
+                        battery_info.power_plugged
+                    )
+                )
+
+        except Exception:
+
+            pass
+
+
+        uptime_seconds = int(
+
+            time.time()
+            -
+            START_TIME
+
+        )
+
+
+        return {
+
+            "success":
+                True,
+
+            "online":
+                True,
+
+            "cpu":
+                round(
+                    float(cpu),
+                    1
+                ),
+
+            "ram":
+                round(
+                    float(
+                        memory.percent
+                    ),
+                    1
+                ),
+
+            "ram_used_gb":
+                round(
+                    memory.used
+                    /
+                    (1024 ** 3),
+                    2
+                ),
+
+            "ram_total_gb":
+                round(
+                    memory.total
+                    /
+                    (1024 ** 3),
+                    2
+                ),
+
+            "disk":
+                round(
+                    float(
+                        disk.percent
+                    ),
+                    1
+                ),
+
+            "disk_used_gb":
+                round(
+                    disk.used
+                    /
+                    (1024 ** 3),
+                    2
+                ),
+
+            "disk_total_gb":
+                round(
+                    disk.total
+                    /
+                    (1024 ** 3),
+                    2
+                ),
+
+            "battery":
+                battery,
+
+            "battery_charging":
+                battery_charging,
+
+            "network_sent":
+                (
+                    network.bytes_sent
+                    if network
+                    else 0
+                ),
+
+            "network_received":
+                (
+                    network.bytes_recv
+                    if network
+                    else 0
+                ),
+
+            "network_sent_text":
+                format_bytes(
+                    network.bytes_sent
+                    if network
+                    else 0
+                ),
+
+            "network_received_text":
+                format_bytes(
+                    network.bytes_recv
+                    if network
+                    else 0
+                ),
+
+            "uptime":
+                uptime_seconds,
+
+            "uptime_text":
+                format_uptime(
+                    uptime_seconds
+                ),
+
+            "os":
+                platform.system(),
+
+            "os_release":
+                platform.release(),
+
+            "platform":
+                platform.platform(),
+
+            "processor":
+                platform.processor(),
+
+            "cpu_cores":
+                psutil.cpu_count(
+                    logical=True
+                ),
+
+            "physical_cores":
+                psutil.cpu_count(
+                    logical=False
+                ),
+
+        }
+
+
+    except Exception as error:
+
+        print(
+            "[SYSTEM MONITOR ERROR]:",
+            repr(error)
+        )
+
+        return {
+
+            "success":
+                False,
+
+            "online":
+                False,
+
+            "error":
+                repr(error),
+
+        }
 
 
 # =========================================================
@@ -278,31 +838,52 @@ async def root():
 
     return {
 
-        "name": "JARVIS",
+        "name":
+            "JARVIS 4.0",
 
-        "version": "4.0.0",
+        "status":
+            "online",
 
-        "status": "online",
+        "version":
+            "4.0.0",
 
-        "message": (
-            "JARVIS 4.0 Backend is running."
-        ),
+        "ai":
+            "Groq",
 
-        "components": {
+        "groq":
+            GROQ_AVAILABLE,
 
-            "core": get_core_status(),
+        "groq_model":
+            GROQ_MODEL,
 
-            "router": (
-                jarvis_router is not None
+        "router":
+            ROUTER_AVAILABLE,
+
+        "commands":
+            COMMANDS_AVAILABLE,
+
+        "core":
+            CORE_AVAILABLE,
+
+        "web_search":
+            WEB_SEARCH_AVAILABLE,
+
+        "tavily":
+            bool(
+                TAVILY_API_KEY
             ),
 
-            "commands": (
-                handle_local_command is not None
-            ),
+        "vision":
+            VISION_MODULE_AVAILABLE,
 
-            "groq": get_groq_status(),
+        "vision_model":
+            VISION_MODEL,
 
-        },
+        "system_monitor":
+            PSUTIL_AVAILABLE,
+
+        "server":
+            "local",
 
     }
 
@@ -314,40 +895,99 @@ async def root():
 @app.get("/status")
 async def status():
 
-    core_available = get_core_status()
+    groq_ok = False
 
-    router_available = (
-        jarvis_router is not None
+    groq_model = GROQ_MODEL
+
+
+    if jarvis_groq is not None:
+
+        try:
+
+            groq_ok = (
+                jarvis_groq.is_available()
+            )
+
+            groq_model = (
+                jarvis_groq.model
+            )
+
+        except Exception:
+
+            groq_ok = False
+
+
+    core_ok = (
+        jarvis_core is not None
     )
 
-    commands_available = (
-        handle_local_command is not None
+
+    web_ok = (
+        web_search_engine is not None
+        and
+        bool(
+            TAVILY_API_KEY
+        )
     )
-
-    groq_available = get_groq_status()
-
-    groq_model = get_groq_model()
 
 
     return {
 
-        "status": "online",
+        "status":
+            "online",
 
-        "jarvis": True,
+        "jarvis":
+            True,
 
-        "sleeping": jarvis_sleeping,
+        "sleeping":
+            jarvis_sleeping,
 
-        "groq": groq_available,
+        "groq":
+            groq_ok,
 
-        "groq_model": groq_model,
+        "groq_model":
+            groq_model,
 
-        "router": router_available,
+        "router":
+            ROUTER_AVAILABLE,
 
-        "commands": commands_available,
+        "commands":
+            COMMANDS_AVAILABLE,
 
-        "core": core_available,
+        "core":
+            core_ok,
+
+        "web":
+            web_ok,
+
+        "tavily":
+            bool(
+                TAVILY_API_KEY
+            ),
+
+        "vision":
+            VISION_MODULE_AVAILABLE,
+
+        "vision_model":
+            VISION_MODEL,
+
+        "system_monitor":
+            PSUTIL_AVAILABLE,
+
+        "server":
+            "local",
 
     }
+
+
+# =========================================================
+# SYSTEM
+# =========================================================
+
+@app.get("/system")
+async def system():
+
+    return get_system_stats()
 
 
 # =========================================================
@@ -361,23 +1001,26 @@ async def wake():
 
     jarvis_sleeping = False
 
-    print(
-        "[JARVIS] Wake command received."
-    )
 
     return {
 
-        "success": True,
+        "success":
+            True,
 
-        "reply": "Ready Sir.",
+        "reply":
+            "Ready Sir.",
 
-        "message": "Ready Sir.",
+        "message":
+            "Ready Sir.",
 
-        "sleeping": False,
+        "sleeping":
+            False,
 
-        "local": True,
+        "local":
+            True,
 
-        "web": False,
+        "web":
+            False,
 
     }
 
@@ -393,23 +1036,26 @@ async def sleep():
 
     jarvis_sleeping = True
 
-    print(
-        "[JARVIS] Sleep command received."
-    )
 
     return {
 
-        "success": True,
+        "success":
+            True,
 
-        "reply": "Okay Sir, sleeping now.",
+        "reply":
+            "Okay Sir, sleeping now.",
 
-        "message": "Okay Sir, sleeping now.",
+        "message":
+            "Okay Sir, sleeping now.",
 
-        "sleeping": True,
+        "sleeping":
+            True,
 
-        "local": True,
+        "local":
+            True,
 
-        "web": False,
+        "web":
+            False,
 
     }
 
@@ -419,254 +1065,182 @@ async def sleep():
 # =========================================================
 
 @app.post("/chat")
-async def chat(request: ChatRequest):
+async def chat(
+    request: ChatRequest
+):
 
     global jarvis_sleeping
+
 
     message = str(
         request.message or ""
     ).strip()
 
 
-    # =====================================================
-    # EMPTY MESSAGE
-    # =====================================================
+    # -----------------------------------------------------
+    # EMPTY
+    # -----------------------------------------------------
 
     if not message:
 
         return {
 
-            "success": False,
+            "success":
+                False,
 
-            "reply": (
-                "Sir, message रिकामा आहे."
-            ),
+            "reply":
+                "Sir, काहीतरी बोला.",
 
-            "message": (
-                "Sir, message रिकामा आहे."
-            ),
+            "message":
+                "Sir, काहीतरी बोला.",
 
-            "local": False,
+            "local":
+                False,
 
-            "web": False,
+            "web":
+                False,
 
-            "sleeping": jarvis_sleeping,
+            "sleeping":
+                jarvis_sleeping,
 
         }
 
 
-    # =====================================================
-    # LOG
-    # =====================================================
-
     print()
-    print("=" * 60)
+    print(
+        "=" * 60
+    )
 
-    print("[JARVIS REQUEST]")
+    print(
+        "[JARVIS REQUEST]"
+    )
 
-    print("Message:", message)
+    print(
+        "Message:",
+        message
+    )
 
-    print("Sleeping:", jarvis_sleeping)
+    print(
+        "Sleeping:",
+        jarvis_sleeping
+    )
 
-    print("=" * 60)
+    print(
+        "=" * 60
+    )
 
 
     # =====================================================
-    # LOCAL COMMAND SYSTEM
+    # LOCAL COMMANDS
     # =====================================================
 
-    if handle_local_command is not None:
+    if COMMANDS_AVAILABLE:
 
         try:
 
-            handled, local_reply, new_sleeping = (
+            command_result = (
                 handle_local_command(
-
-                    message,
-
-                    sleeping=jarvis_sleeping,
-
-                )
-            )
-
-
-            print(
-                "[LOCAL RESULT]:",
-                handled,
-                local_reply,
-                new_sleeping
-            )
-
-
-            # =================================================
-            # WAKE COMMAND
-            # =================================================
-
-            if handled and not new_sleeping:
-
-                normalized = (
                     message
-                    .strip()
-                    .lower()
                 )
+            )
 
 
-                wake_words = [
+            # ---------------------------------------------
+            # Current commands.py returns 3 values
+            # ---------------------------------------------
 
-                    "wake",
+            if isinstance(
+                command_result,
+                tuple
+            ):
 
-                    "wake up",
+                if len(
+                    command_result
+                ) == 3:
 
-                    "wake jarvis",
-
-                    "wake up jarvis",
-
-                    "jarvis wake",
-
-                    "jarvis wake up",
-
-                    "wake up please",
-
-                    "jarvis please wake up",
-
-                    "जाग",
-
-                    "जाग जार्विस",
-
-                    "जार्विस जाग",
-
-                    "जागा जार्विस",
-
-                ]
-
-
-                is_wake = (
-
-                    normalized in wake_words
-
-                    or
-                    "wake up jarvis"
-                    in normalized
-
-                    or
-                    "jarvis wake up"
-                    in normalized
-
-                )
-
-
-                if is_wake:
-
-                    jarvis_sleeping = False
-
-                    reply = (
-                        local_reply
-                        or
-                        "Ready Sir."
+                    handled = (
+                        command_result[0]
                     )
 
+                    local_reply = (
+                        command_result[1]
+                    )
 
-                    return {
+                    new_sleeping = (
+                        command_result[2]
+                    )
 
-                        "success": True,
+                elif len(
+                    command_result
+                ) == 2:
 
-                        "reply": reply,
+                    handled = (
+                        command_result[0]
+                    )
 
-                        "message": reply,
+                    local_reply = (
+                        command_result[1]
+                    )
 
-                        "local": True,
+                    new_sleeping = (
+                        jarvis_sleeping
+                    )
 
-                        "web": False,
+                else:
 
-                        "sleeping": False,
+                    handled = False
 
-                    }
+                    local_reply = None
 
+                    new_sleeping = (
+                        jarvis_sleeping
+                    )
 
-            # =================================================
-            # SLEEP COMMAND
-            # =================================================
+            else:
 
-            if handled and new_sleeping:
+                handled = False
 
-                jarvis_sleeping = True
+                local_reply = None
 
-                reply = (
-
-                    local_reply
-
-                    or
-
-                    "Okay Sir, sleeping now."
-
+                new_sleeping = (
+                    jarvis_sleeping
                 )
 
 
-                return {
+            # ---------------------------------------------
+            # Update state
+            # ---------------------------------------------
 
-                    "success": True,
+            if handled:
 
-                    "reply": reply,
-
-                    "message": reply,
-
-                    "local": True,
-
-                    "web": False,
-
-                    "sleeping": True,
-
-                }
-
-
-            # =================================================
-            # OTHER LOCAL COMMAND
-            # =================================================
-
-            if handled and local_reply:
-
-                jarvis_sleeping = (
+                jarvis_sleeping = bool(
                     new_sleeping
                 )
 
-                return {
-
-                    "success": True,
-
-                    "reply": local_reply,
-
-                    "message": local_reply,
-
-                    "local": True,
-
-                    "web": False,
-
-                    "sleeping": (
-                        jarvis_sleeping
-                    ),
-
-                }
-
-
-            # =================================================
-            # SLEEPING
-            # =================================================
-
-            if jarvis_sleeping:
 
                 return {
 
-                    "success": True,
+                    "success":
+                        True,
 
-                    "reply": None,
+                    "reply":
+                        clean_reply(
+                            local_reply
+                        ),
 
-                    "message": None,
+                    "message":
+                        clean_reply(
+                            local_reply
+                        ),
 
-                    "local": True,
+                    "local":
+                        True,
 
-                    "web": False,
+                    "web":
+                        False,
 
-                    "sleeping": True,
+                    "sleeping":
+                        jarvis_sleeping,
 
                 }
 
@@ -682,35 +1256,59 @@ async def chat(request: ChatRequest):
 
 
     # =====================================================
+    # SLEEPING
+    # =====================================================
+
+    if jarvis_sleeping:
+
+        return {
+
+            "success":
+                True,
+
+            "reply":
+                None,
+
+            "message":
+                None,
+
+            "local":
+                True,
+
+            "web":
+                False,
+
+            "sleeping":
+                True,
+
+        }
+
+
+    # =====================================================
     # CORE CHECK
     # =====================================================
 
     if jarvis_core is None:
 
-        print(
-            "[MAIN] JARVIS Core unavailable."
-        )
-
-
         return {
 
-            "success": False,
+            "success":
+                False,
 
-            "reply": (
-                "Sir, JARVIS Core available नाही."
-            ),
+            "reply":
+                "Sir, JARVIS Core available नाही.",
 
-            "message": (
-                "Sir, JARVIS Core available नाही."
-            ),
+            "message":
+                "Sir, JARVIS Core available नाही.",
 
-            "local": False,
+            "local":
+                False,
 
-            "web": False,
+            "web":
+                False,
 
-            "sleeping": jarvis_sleeping,
-
-            "core": False,
+            "sleeping":
+                jarvis_sleeping,
 
         }
 
@@ -721,11 +1319,6 @@ async def chat(request: ChatRequest):
 
     try:
 
-        print(
-            "[MAIN] Sending request to JARVIS Core..."
-        )
-
-
         result = await jarvis_core.process(
             message
         )
@@ -734,256 +1327,613 @@ async def chat(request: ChatRequest):
     except Exception as error:
 
         print()
-        print("=" * 60)
+        print(
+            "[CORE ERROR]"
+        )
 
-        print("[CORE ERROR]")
-
-        print("Type:", type(error).__name__)
-
-        print("Message:", str(error))
-
-        print("Details:", repr(error))
-
-        print("=" * 60)
+        print(
+            repr(error)
+        )
 
         traceback.print_exc()
 
 
         return {
 
-            "success": False,
+            "success":
+                False,
 
-            "reply": (
-                "Sir, JARVIS Core मध्ये error आला."
-            ),
+            "reply":
+                "Sir, JARVIS Core मध्ये error आला.",
 
-            "message": (
-                "Sir, JARVIS Core मध्ये error आला."
-            ),
+            "message":
+                "Sir, JARVIS Core मध्ये error आला.",
 
-            "local": False,
+            "local":
+                False,
 
-            "web": False,
+            "web":
+                False,
 
-            "sleeping": jarvis_sleeping,
+            "sleeping":
+                jarvis_sleeping,
 
-            "core": True,
-
-            "error": repr(error),
+            "error":
+                repr(error),
 
         }
 
 
     # =====================================================
-    # INVALID CORE RESPONSE
+    # INVALID CORE RESULT
     # =====================================================
 
-    if not isinstance(result, dict):
-
-        print(
-            "[MAIN] Invalid Core response:",
-            repr(result)
-        )
-
+    if not isinstance(
+        result,
+        dict
+    ):
 
         return {
 
-            "success": False,
+            "success":
+                False,
 
-            "reply": (
-                "Sir, Core कडून invalid response मिळाला."
-            ),
+            "reply":
+                "Sir, Core कडून invalid response मिळाला.",
 
-            "message": (
-                "Sir, Core कडून invalid response मिळाला."
-            ),
+            "message":
+                "Sir, Core कडून invalid response मिळाला.",
 
-            "local": False,
+            "local":
+                False,
 
-            "web": False,
+            "web":
+                False,
 
-            "sleeping": jarvis_sleeping,
-
-            "core": True,
+            "sleeping":
+                jarvis_sleeping,
 
         }
 
-
-    # =====================================================
-    # CORE RESULT TYPE
-    # =====================================================
 
     result_type = str(
         result.get(
             "type",
             "chat"
         )
+        or
+        "chat"
     ).strip().lower()
 
 
-    print(
-        "[MAIN CORE TYPE]:",
-        result_type
-    )
-
-
     # =====================================================
-    # WEB RESULT
+    # WEB
     # =====================================================
 
     if result_type == "web":
 
-        web_message = str(
+        web_reply = clean_reply(
 
             result.get(
                 "message",
-                message
+                ""
             )
 
-            or
+        )
 
-            message
 
-        ).strip()
+        if not web_reply:
+
+            web_reply = (
+                "Sir, web search कडून योग्य answer मिळाला नाही."
+            )
 
 
         return {
 
-            "success": True,
+            "success":
+                True,
 
-            "reply": None,
+            "reply":
+                web_reply,
 
-            "message": web_message,
+            "message":
+                web_reply,
 
-            "local": False,
+            "local":
+                False,
 
-            "web": True,
+            "web":
+                True,
 
-            "sleeping": jarvis_sleeping,
+            "sleeping":
+                jarvis_sleeping,
 
-            "route": result.get(
-                "route"
-            ),
+            "route":
+                result.get(
+                    "route"
+                ),
 
-            "context": result.get(
-                "context",
-                ""
-            ),
-
-            "core": True,
+            "context":
+                result.get(
+                    "context",
+                    ""
+                ),
 
         }
 
 
     # =====================================================
-    # CORE ERROR
+    # ERROR
     # =====================================================
 
     if result_type == "error":
 
-        error_message = str(
+        error_message = clean_reply(
 
             result.get(
-
                 "message",
-
                 "AI response generate करण्यात error आला."
-
             )
 
-            or
-
-            "AI response generate करण्यात error आला."
-
-        ).strip()
+        )
 
 
         return {
 
-            "success": False,
+            "success":
+                False,
 
-            "reply": error_message,
+            "reply":
+                error_message,
 
-            "message": error_message,
+            "message":
+                error_message,
 
-            "local": False,
+            "local":
+                False,
 
-            "web": False,
+            "web":
+                False,
 
-            "sleeping": jarvis_sleeping,
+            "sleeping":
+                jarvis_sleeping,
 
-            "route": result.get(
-                "route"
-            ),
+            "route":
+                result.get(
+                    "route"
+                ),
 
-            "error": result.get(
-                "error"
-            ),
-
-            "core": True,
+            "error":
+                result.get(
+                    "error"
+                ),
 
         }
 
 
     # =====================================================
-    # CHAT RESPONSE
+    # NORMAL CHAT
     # =====================================================
 
-    reply = str(
+    reply = clean_reply(
 
         result.get(
             "message",
             ""
         )
 
-        or
-
-        ""
-
-    ).strip()
+    )
 
 
     if not reply:
 
         reply = (
-            "Sir, मला response मिळाला नाही."
+            "Sir, मला योग्य response मिळाला नाही."
         )
 
 
     return {
 
-        "success": True,
+        "success":
+            True,
 
-        "reply": reply,
+        "reply":
+            reply,
 
-        "message": reply,
+        "message":
+            reply,
 
-        "local": False,
+        "local":
+            False,
 
-        "web": False,
+        "web":
+            False,
 
-        "sleeping": jarvis_sleeping,
+        "sleeping":
+            jarvis_sleeping,
 
-        "route": result.get(
-            "route"
-        ),
+        "route":
+            result.get(
+                "route"
+            ),
 
-        "context": result.get(
-            "context",
-            ""
-        ),
+        "context":
+            result.get(
+                "context",
+                ""
+            ),
 
-        "model": result.get(
-            "model"
-        ),
-
-        "core": True,
+        "model":
+            result.get(
+                "model"
+            ),
 
     }
 
 
 # =========================================================
-# MEMORY - REMEMBER
+# VISION
+# =========================================================
+
+@app.post("/vision")
+async def vision_endpoint(
+
+    image: UploadFile = File(...),
+
+    prompt: str = Form(
+
+        "या image मध्ये काय दिसत आहे? "
+        "महत्वाचे details थोडक्यात सांगा."
+
+    ),
+
+):
+
+    start_time = time.time()
+
+
+    # =====================================================
+    # MODULE CHECK
+    # =====================================================
+
+    if not VISION_MODULE_AVAILABLE:
+
+        return {
+
+            "success":
+                False,
+
+            "reply":
+                "Sir, Vision module उपलब्ध नाही.",
+
+            "vision":
+                False,
+
+            "model":
+                VISION_MODEL,
+
+        }
+
+
+    # =====================================================
+    # FILE VALIDATION
+    # =====================================================
+
+    filename = str(
+        image.filename or ""
+    ).strip()
+
+
+    content_type = str(
+
+        image.content_type
+        or
+        "image/png"
+
+    ).strip().lower()
+
+
+    allowed_types = {
+
+        "image/png",
+
+        "image/jpeg",
+
+        "image/jpg",
+
+        "image/webp",
+
+    }
+
+
+    if content_type not in allowed_types:
+
+        return {
+
+            "success":
+                False,
+
+            "reply":
+                "Sir, PNG, JPG किंवा WEBP image वापरा.",
+
+            "vision":
+                False,
+
+        }
+
+
+    # =====================================================
+    # READ IMAGE
+    # =====================================================
+
+    try:
+
+        image_bytes = await image.read()
+
+    except Exception as error:
+
+        print(
+            "[VISION READ ERROR]:",
+            repr(error)
+        )
+
+        return {
+
+            "success":
+                False,
+
+            "reply":
+                "Sir, image read करता आली नाही.",
+
+            "error":
+                repr(error),
+
+        }
+
+
+    if not image_bytes:
+
+        return {
+
+            "success":
+                False,
+
+            "reply":
+                "Sir, image data रिकामी आहे.",
+
+        }
+
+
+    # =====================================================
+    # SIZE LIMIT
+    # =====================================================
+
+    max_image_size = (
+        20 * 1024 * 1024
+    )
+
+
+    if len(image_bytes) > max_image_size:
+
+        return {
+
+            "success":
+                False,
+
+            "reply":
+                "Sir, image 20 MB पेक्षा कमी असावी.",
+
+            "size":
+                len(image_bytes),
+
+        }
+
+
+    print()
+    print(
+        "[VISION REQUEST]"
+    )
+
+    print(
+        "Filename:",
+        filename
+    )
+
+    print(
+        "Content Type:",
+        content_type
+    )
+
+    print(
+        "Size:",
+        len(image_bytes),
+        "bytes"
+    )
+
+    print(
+        "Model:",
+        VISION_MODEL
+    )
+
+
+    # =====================================================
+    # GROQ CLIENT
+    # =====================================================
+
+    groq_client = None
+
+
+    if jarvis_groq is not None:
+
+        try:
+
+            groq_client = (
+                jarvis_groq.client
+            )
+
+        except Exception:
+
+            groq_client = None
+
+
+    if groq_client is None:
+
+        return {
+
+            "success":
+                False,
+
+            "reply":
+                "Sir, Groq Vision client उपलब्ध नाही.",
+
+        }
+
+
+    # =====================================================
+    # ASK VISION
+    # =====================================================
+
+    try:
+
+        reply = ask_vision(
+
+            image_bytes=image_bytes,
+
+            prompt=prompt,
+
+            content_type=content_type,
+
+            groq_client=groq_client,
+
+            model=VISION_MODEL,
+
+            temperature=0.7,
+
+            max_tokens=1024,
+
+        )
+
+
+    except Exception as error:
+
+        print(
+            "[VISION ERROR]:",
+            repr(error)
+        )
+
+        traceback.print_exc()
+
+
+        return {
+
+            "success":
+                False,
+
+            "reply":
+                "Sir, image analysis करताना problem आली.",
+
+            "error":
+                repr(error),
+
+            "filename":
+                filename,
+
+            "content_type":
+                content_type,
+
+            "vision":
+                False,
+
+            "model":
+                VISION_MODEL,
+
+        }
+
+
+    # =====================================================
+    # CLEAN
+    # =====================================================
+
+    reply = clean_reply(
+        reply
+    )
+
+
+    if not reply:
+
+        return {
+
+            "success":
+                False,
+
+            "reply":
+                "Sir, Vision कडून response मिळाला नाही.",
+
+            "vision":
+                False,
+
+        }
+
+
+    elapsed = round(
+
+        time.time()
+        -
+        start_time,
+
+        2
+
+    )
+
+
+    print(
+        "[VISION SUCCESS]"
+    )
+
+    print(
+        "Time:",
+        elapsed,
+        "seconds"
+    )
+
+    print(
+        "Reply:",
+        reply
+    )
+
+
+    return {
+
+        "success":
+            True,
+
+        "reply":
+            reply,
+
+        "message":
+            reply,
+
+        "filename":
+            filename,
+
+        "content_type":
+            content_type,
+
+        "vision":
+            True,
+
+        "model":
+            VISION_MODEL,
+
+        "time":
+            elapsed,
+
+    }
+
+
+# =========================================================
+# MEMORY REMEMBER
 # =========================================================
 
 @app.post("/memory/remember")
@@ -995,54 +1945,37 @@ async def remember(
 
         return {
 
-            "success": False,
+            "success":
+                False,
 
-            "message": (
+            "message":
                 "JARVIS Core unavailable."
-            ),
 
         }
 
 
     try:
 
-        role = str(
-            request.role or ""
-        ).strip()
-
-
-        content = str(
-            request.content or ""
-        ).strip()
-
-
-        if not role or not content:
-
-            return {
-
-                "success": False,
-
-                "message": (
-                    "Role आणि content आवश्यक आहेत."
-                ),
-
-            }
-
-
-        jarvis_core.remember(
-
-            role,
-
-            content
-
+        success = (
+            jarvis_core.remember(
+                request.role,
+                request.content
+            )
         )
 
 
         return {
 
-            "success": True,
+            "success":
+                bool(success),
 
-            "message": "Memory saved.",
+            "message":
+                (
+                    "Memory saved."
+                    if success
+                    else
+                    "Memory save failed."
+                ),
 
         }
 
@@ -1054,24 +1987,23 @@ async def remember(
             repr(error)
         )
 
-        traceback.print_exc()
-
 
         return {
 
-            "success": False,
+            "success":
+                False,
 
-            "message": (
-                "Memory save failed."
-            ),
+            "message":
+                "Memory save failed.",
 
-            "error": repr(error),
+            "error":
+                repr(error),
 
         }
 
 
 # =========================================================
-# MEMORY - CLEAR
+# MEMORY CLEAR
 # =========================================================
 
 @app.post("/memory/clear")
@@ -1081,11 +2013,11 @@ async def clear_memory():
 
         return {
 
-            "success": False,
+            "success":
+                False,
 
-            "message": (
+            "message":
                 "JARVIS Core unavailable."
-            ),
 
         }
 
@@ -1099,19 +2031,16 @@ async def clear_memory():
 
         return {
 
-            "success": bool(success),
+            "success":
+                bool(success),
 
-            "message": (
-
-                "Memory cleared."
-
-                if success
-
-                else
-
-                "Memory clear failed."
-
-            ),
+            "message":
+                (
+                    "Memory cleared."
+                    if success
+                    else
+                    "Memory clear failed."
+                ),
 
         }
 
@@ -1123,18 +2052,69 @@ async def clear_memory():
             repr(error)
         )
 
-        traceback.print_exc()
+
+        return {
+
+            "success":
+                False,
+
+            "message":
+                "Memory clear failed.",
+
+            "error":
+                repr(error),
+
+        }
+
+
+# =========================================================
+# RESET
+# =========================================================
+
+@app.post("/reset")
+async def reset():
+
+    try:
+
+        if jarvis_core is not None:
+
+            if hasattr(
+                jarvis_core,
+                "clear_memory"
+            ):
+
+                jarvis_core.clear_memory()
 
 
         return {
 
-            "success": False,
+            "success":
+                True,
 
-            "message": (
-                "Memory clear failed."
-            ),
+            "message":
+                "Conversation reset.",
 
-            "error": repr(error),
+        }
+
+
+    except Exception as error:
+
+        print(
+            "[RESET ERROR]:",
+            repr(error)
+        )
+
+
+        return {
+
+            "success":
+                False,
+
+            "message":
+                "Reset failed.",
+
+            "error":
+                repr(error),
 
         }
 
@@ -1143,17 +2123,23 @@ async def clear_memory():
 # STARTUP
 # =========================================================
 
-@app.on_event("startup")
+@app.on_event(
+    "startup"
+)
 async def startup_event():
 
     print()
-    print("=" * 60)
-
     print(
-        "             JARVIS 4.0 BACKEND"
+        "=" * 60
     )
 
-    print("=" * 60)
+    print(
+        "          JARVIS 4.0 BACKEND"
+    )
+
+    print(
+        "=" * 60
+    )
 
     print(
         "[STARTUP] Backend:",
@@ -1162,36 +2148,72 @@ async def startup_event():
 
     print(
         "[STARTUP] Core:",
-        get_core_status()
+        CORE_AVAILABLE
     )
 
     print(
         "[STARTUP] Router:",
-        jarvis_router is not None
+        ROUTER_AVAILABLE
     )
 
     print(
         "[STARTUP] Commands:",
-        handle_local_command is not None
+        COMMANDS_AVAILABLE
     )
 
     print(
         "[STARTUP] Groq:",
-        get_groq_status()
+        GROQ_AVAILABLE
     )
 
     print(
-        "[STARTUP] Model:",
-        get_groq_model()
+        "[STARTUP] Groq Model:",
+        GROQ_MODEL
     )
 
-    print("=" * 60)
+    print(
+        "[STARTUP] Tavily:",
+        bool(
+            TAVILY_API_KEY
+        )
+    )
+
+    print(
+        "[STARTUP] Web Search:",
+        WEB_SEARCH_AVAILABLE
+    )
+
+    print(
+        "[STARTUP] Vision:",
+        VISION_MODULE_AVAILABLE
+    )
+
+    print(
+        "[STARTUP] Vision Model:",
+        VISION_MODEL
+    )
+
+    print(
+        "[STARTUP] System Monitor:",
+        PSUTIL_AVAILABLE
+    )
+
+    print(
+        "[STARTUP] Server:",
+        "http://127.0.0.1:8000"
+    )
+
+    print(
+        "=" * 60
+    )
 
     print(
         "[STARTUP] JARVIS 4.0 READY."
     )
 
-    print("=" * 60)
+    print(
+        "=" * 60
+    )
 
     print()
 
@@ -1200,16 +2222,14 @@ async def startup_event():
 # SHUTDOWN
 # =========================================================
 
-@app.on_event("shutdown")
+@app.on_event(
+    "shutdown"
+)
 async def shutdown_event():
 
     print()
     print(
-        "[JARVIS] Backend shutting down..."
-    )
-
-    print(
-        "[JARVIS] Goodbye Sir."
+        "[SHUTDOWN] JARVIS 4.0 stopping..."
     )
 
     print()
@@ -1230,12 +2250,18 @@ if __name__ == "__main__":
     )
 
 
-    PORT = int(
-        os.getenv(
-            "SERVER_PORT",
-            "8000"
+    try:
+
+        PORT = int(
+            os.getenv(
+                "SERVER_PORT",
+                "8000"
+            )
         )
-    )
+
+    except Exception:
+
+        PORT = 8000
 
 
     print()
@@ -1244,7 +2270,7 @@ if __name__ == "__main__":
     )
 
     print(
-        f"[JARVIS] URL: http://127.0.0.1:{PORT}"
+        f"[JARVIS] http://127.0.0.1:{PORT}"
     )
 
     print()
@@ -1252,7 +2278,7 @@ if __name__ == "__main__":
 
     uvicorn.run(
 
-        "main:app",
+        app,
 
         host=HOST,
 
@@ -1261,3 +2287,4 @@ if __name__ == "__main__":
         reload=False,
 
     )
+
